@@ -89,7 +89,7 @@ async def batch_match_jobs(
             try:
                 # Query if match already exists to track created vs updated counts
                 stmt = select(MatchResult).where(
-                    (MatchResult.candidate_profile_id == profile.candidate_profile_id) &
+                    (MatchResult.candidate_profile_id == str(profile.id)) &
                     (MatchResult.job_id == job.job_id)
                 )
                 existing = session.exec(stmt).first()

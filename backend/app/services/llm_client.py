@@ -211,20 +211,32 @@ def get_llm_client() -> BaseLLMClient:
     """
     Factory function to retrieve the active LLM client.
     Exposes the provider-neutral BaseLLMClient to business logic.
+
+    Raises RuntimeError if no valid LLM provider is configured so that the
+    API endpoint returns a clear error to the user instead of silently
+    returning a hardcoded mock profile.
     """
     global _llm_client
     if _llm_client is not None:
         return _llm_client
-        
+
     # Instantiate client depending on configurations
     if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY != "your_gemini_api_key_here":
         logger.info("GEMINI_API_KEY detected. Initializing GeminiClient.")
         _llm_client = GeminiClient(api_key=settings.GEMINI_API_KEY)
-    else:
-        logger.warning("GEMINI_API_KEY is not set or placeholder. Falling back to FakeLLMClient.")
-        _llm_client = FakeLLMClient()
-        
-    return _llm_client
+        return _llm_client
+
+    # No valid API key — refuse to use FakeLLMClient in production so the
+    # caller receives an explicit error rather than silent mock data.
+    logger.error(
+        "GEMINI_API_KEY is not set or is a placeholder. "
+        "Cannot perform real resume parsing. "
+        "Set a valid GEMINI_API_KEY in your .env file."
+    )
+    raise RuntimeError(
+        "AI extraction is unavailable: GEMINI_API_KEY is not configured. "
+        "Please add a valid Gemini API key to your .env file and restart the backend."
+    )
 
 def set_llm_client(client: BaseLLMClient):
     """

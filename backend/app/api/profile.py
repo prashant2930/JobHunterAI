@@ -127,11 +127,19 @@ async def upload_resume(file: UploadFile = File(...)):
     except ValueError as e:
         logger.error(f"Text extraction failed: {e}")
         raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        # Raised by get_llm_client() when no valid API key is configured,
+        # or by GeminiClient when structured parsing fails.
+        logger.error(f"LLM service unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error(f"Resume processing pipeline failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to process resume: {e}"
+            detail=f"Failed to process resume. Check backend logs for details."
         )
 
 

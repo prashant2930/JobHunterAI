@@ -1,4 +1,5 @@
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+
 
 export interface HealthResponse {
   status: string;
@@ -206,13 +207,23 @@ export interface JobSearchRequest {
   max_pages?: number;
 }
 
+export interface DuplicateRecordInfo {
+  title: string;
+  company: string;
+  sources: string[];
+  canonical_url: string;
+  detected_at: string;
+}
+
 export interface JobSearchResponse {
   jobs_found: number;
   new_jobs: number;
   duplicates_removed: number;
   errors: Record<string, string>;
   jobs: Job[];
+  duplicate_records?: DuplicateRecordInfo[];
 }
+
 
 export interface JobQueryParams {
   page?: number;
@@ -222,7 +233,10 @@ export interface JobQueryParams {
   location?: string;
   remote?: string;
   title?: string;
+  min_exp?: number;
+  max_exp?: number;
 }
+
 
 /**
  * Searches for jobs across multiple sources and ingests them into the backend database.
@@ -412,5 +426,107 @@ export async function getMatchDetails(matchId: string): Promise<MatchResult> {
 
   return response.json();
 }
+
+// ==========================================
+// Phase 4: Application Intelligence Interfaces & APIs
+// ==========================================
+
+export interface ApplicationFormField {
+  id: string;
+  application_id: string;
+  field_name: string;
+  label: string;
+  field_type: string;
+  required: boolean;
+  options: string[];
+  current_value: string | null;
+  suggested_value: string | null;
+  source: "candidate_profile" | "llm_generated" | "user_override" | "unknown" | string;
+  confidence: number;
+  requires_review: boolean;
+}
+
+export interface ApplicationResponse {
+  id: string;
+  job_id: string;
+  candidate_profile_id: string;
+  application_url: string;
+  platform: string;
+  status: "DISCOVERED" | "ANALYZING" | "READY_FOR_REVIEW" | "APPROVED" | "FAILED" | string;
+  created_at: string;
+  updated_at: string;
+  fields: ApplicationFormField[];
+}
+
+export interface ApplicationFieldUpdate {
+  field_id: string;
+  current_value?: string | null;
+  requires_review?: boolean | null;
+}
+
+/**
+ * Analyzes application form fields for a target job.
+ */
+export async function analyzeApplication(jobId: string, applicationUrl?: string): Promise<ApplicationResponse> {
+  const response = await fetch(`${BACKEND_URL}/api/applications/analyze`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+    body: JSON.stringify({ job_id: jobId, application_url: applicationUrl }),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.detail || "Failed to analyze application form.");
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieves full detail of an analyzed application.
+ */
+export async function getApplicationDetails(applicationId: string): Promise<ApplicationResponse> {
+  const response = await fetch(`${BACKEND_URL}/api/applications/${applicationId}`, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.detail || "Failed to load application details.");
+  }
+
+  return response.json();
+}
+
+/**
+ * Approves an application package after human review.
+ */
+export async function approveApplication(
+  applicationId: string,
+  fieldUpdates?: ApplicationFieldUpdate[]
+): Promise<ApplicationResponse> {
+  const response = await fetch(`${BACKEND_URL}/api/applications/${applicationId}/approve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+    body: JSON.stringify({ field_updates: fieldUpdates }),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.detail || "Failed to approve application package.");
+  }
+
+  return response.json();
+}
+
 
 

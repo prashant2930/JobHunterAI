@@ -6,6 +6,7 @@ import json
 from app.models.candidate import (
     CandidateProfileSchema,
     PersonalInfoSchema,
+    ResumeExtractionSchema,
     SkillsSchema,
     AdditionalInfoSchema,
     UserPreferencesSchema
@@ -66,7 +67,7 @@ class GeminiClient(BaseLLMClient):
         )
         
         # We use gemini-2.5-flash for structured text tasks
-        model_name = "gemini-2.5-flash"
+        model_name = "gemini-3.5-flash"
         
         try:
             logger.info("Initiating Gemini structured content call for resume parsing...")
@@ -78,8 +79,8 @@ class GeminiClient(BaseLLMClient):
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
-                    response_schema=CandidateProfileSchema,
-                    temperature=0.0,  # Zero-temperature for deterministic extraction
+                    response_schema=ResumeExtractionSchema,
+                    #temperature=0.0,  # Zero-temperature for deterministic extraction
                 ),
             )
             
@@ -109,7 +110,7 @@ class GeminiClient(BaseLLMClient):
 
     async def parse_structured(self, prompt: str, schema_class: type):
         from google.genai import types
-        model_name = "gemini-2.5-flash"
+        model_name = "gemini-3.5-flash"
         try:
             logger.info(f"Initiating Gemini structured content call for schema {schema_class.__name__}...")
             
@@ -120,7 +121,7 @@ class GeminiClient(BaseLLMClient):
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
                         response_schema=schema_class,
-                        temperature=0.0,
+                       # temperature=0.0,
                     ),
                 )
             
@@ -195,10 +196,18 @@ class FakeLLMClient(BaseLLMClient):
                 confidence=1.0,
                 reasoning_summary="Matching skills are strong. Location and remote preferences align."
             )
+        if schema_class.__name__ == "QuestionAnswerSchema":
+            return schema_class(
+                suggested_answer="I am excited about this role because my background in software engineering aligns with your technical goals.",
+                confidence=0.8,
+                requires_review=True,
+                reasoning="Based on candidate resume skills and target job description."
+            )
         try:
             return schema_class()
         except Exception:
             return schema_class.model_construct()
+
 
 
 # ==========================================

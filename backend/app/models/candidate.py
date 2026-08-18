@@ -54,16 +54,26 @@ class UserPreferencesSchema(BaseModel):
     preferred_locations: List[str] = PydanticField(default_factory=list)
     remote_preference: Optional[str] = None  # e.g., "remote", "hybrid", "onsite", "any"
     experience_level: Optional[str] = None  # e.g., "intern", "entry", "mid", "senior", "lead"
-
+class ResumeExtractionSchema(BaseModel):
+    version: str = "1.0"
+    personal_info: PersonalInfoSchema
+    education: List[EducationSchema] = PydanticField(default_factory=list)
+    skills: SkillsSchema = PydanticField(default_factory=SkillsSchema)
+    experience: List[ExperienceSchema] = PydanticField(default_factory=list)
+    projects: List[ProjectSchema] = PydanticField(default_factory=list)
+    certifications: List[str] = PydanticField(default_factory=list)
+    additional_info: AdditionalInfoSchema = PydanticField(
+        default_factory=AdditionalInfoSchema
+    )
 class CandidateProfileSchema(BaseModel):
     version: str = "1.0"
     personal_info: PersonalInfoSchema
     education: List[EducationSchema] = PydanticField(default_factory=list)
-    skills: SkillsSchema = PydanticField(default_factory=list)
+    skills: SkillsSchema = PydanticField(default_factory=SkillsSchema)
     experience: List[ExperienceSchema] = PydanticField(default_factory=list)
     projects: List[ProjectSchema] = PydanticField(default_factory=list)
     certifications: List[str] = PydanticField(default_factory=list)
-    additional_info: AdditionalInfoSchema = PydanticField(default_factory=list)
+    additional_info: AdditionalInfoSchema = PydanticField(default_factory=AdditionalInfoSchema)
     
     # Preferences (must NOT be populated by Gemini extraction)
     preferences: UserPreferencesSchema = PydanticField(default_factory=UserPreferencesSchema)

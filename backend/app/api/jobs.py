@@ -7,8 +7,11 @@ from app.database import get_session
 from app.models.job import Job, JobSearchRequest, JobSearchResponse
 from app.services.job_aggregator import JobAggregatorService
 
+from app.services.normalization import JobNormalizationService
+
 router = APIRouter()
 logger = logging.getLogger("jobhunter")
+
 
 @router.post("/jobs/search", response_model=JobSearchResponse)
 async def search_jobs(
@@ -48,11 +51,13 @@ def get_jobs(
     location: Optional[str] = None,
     remote: Optional[str] = None,
     title: Optional[str] = None,
+    min_exp: Optional[float] = None,
+    max_exp: Optional[float] = None,
     session: Session = Depends(get_session)
 ):
     """
     Retrieves a list of normalized job openings from the local database.
-    Supports pagination and filters.
+    Supports pagination, filters, and experience level bounds.
     """
     try:
         stmt = select(Job)
@@ -67,16 +72,36 @@ def get_jobs(
         if remote and remote != "any":
             stmt = stmt.where(Job.remote_status == remote)
         if title:
-            stmt = stmt.where(Job.title.ilike(f"%{title}%"))
+            title_terms = [t.strip() for t in title.split() if len(t.strip()) > 2]
+            if title_terms:
+                from sqlmodel import or_
+                stmt = stmt.where(or_(*[Job.title.ilike(f"%{term}%") for term in title_terms]))
+
+        if min_exp is not None:
+            stmt = stmt.where((Job.experience_required >= min_exp) | (Job.experience_required == None))
+        if max_exp is not None:
+            stmt = stmt.where((Job.experience_required <= max_exp) | (Job.experience_required == None))
             
         # Order by posted_date descending (null values placed last)
         stmt = stmt.order_by(Job.posted_date.desc())
+
         
         # Paginate results
         stmt = stmt.offset((page - 1) * limit).limit(limit)
         
         jobs = session.exec(stmt).all()
-        return jobs
+        filtered = [
+            j for j in jobs 
+            if JobNormalizationService.is_job_relevant(
+                title=j.title, 
+                query=title or "", 
+                max_exp=max_exp, 
+                min_exp=min_exp, 
+                job_exp=j.experience_required
+            )
+        ]
+        return filtered
+
         
     except Exception as e:
         logger.error(f"Retrieve jobs list failed: {e}", exc_info=True)

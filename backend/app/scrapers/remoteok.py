@@ -65,15 +65,15 @@ class RemoteOKSource(BaseJobSource):
                         description = item.get("description", "").lower()
                         tags = [tag.lower() for tag in item.get("tags", [])]
                         
-                        # Match if ANY query keyword matches title, description, or tags
                         match = False
                         if not keywords:
                             match = True
                         else:
                             for kw in keywords:
-                                if kw in title or kw in description or any(kw in tag for tag in tags):
+                                if kw in title or any(kw in tag for tag in tags):
                                     match = True
                                     break
+
                                     
                         if match:
                             filtered_listings.append(item)

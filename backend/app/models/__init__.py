@@ -2,6 +2,7 @@ from .database_foundation import SystemStatus
 from .candidate import CandidateProfile, EducationRecord, ExperienceRecord, ProjectRecord
 from .job import Job
 from .match import MatchResult, RecommendationEnum
+from .application import Application, ApplicationFormField
 
 __all__ = [
     "SystemStatus",
@@ -11,5 +12,8 @@ __all__ = [
     "ProjectRecord",
     "Job",
     "MatchResult",
-    "RecommendationEnum"
+    "RecommendationEnum",
+    "Application",
+    "ApplicationFormField"
 ]
+

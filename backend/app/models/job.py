@@ -66,9 +66,18 @@ class JobSearchRequest(BaseModel):
     limit: int = 10
     max_pages: int = 1
 
+class DuplicateRecordInfo(BaseModel):
+    title: str
+    company: str
+    sources: List[str]
+    canonical_url: str
+    detected_at: str
+
 class JobSearchResponse(BaseModel):
     jobs_found: int
     new_jobs: int
     duplicates_removed: int
     errors: dict  # e.g., {"Adzuna": "Connection timed out"}
     jobs: List[Job]
+    duplicate_records: List[DuplicateRecordInfo] = []
+

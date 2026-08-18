@@ -9,3 +9,5 @@ pypdf==4.1.0
 docx2txt==0.8
 google-genai==0.3.0
 python-multipart==0.0.9
+beautifulsoup4==4.15.0
+

@@ -248,12 +248,13 @@ def test_api_jobs_endpoints():
                 }
             ]
 
-    with patch("app.services.job_aggregator.AdzunaSource", MockAdzunaSource), \
-         patch("app.services.job_aggregator.RemoteOKSource", MockRemoteOKSource):
+    mock_sources = [MockAdzunaSource(), MockRemoteOKSource()]
+    with patch.object(JobAggregatorService, "__init__", lambda self: setattr(self, "sources", mock_sources)):
         response = client.post(
             "/api/jobs/search",
             json={"query": "React", "max_pages": 1}
         )
+
         assert response.status_code == 200
         data = response.json()
         assert data["jobs_found"] == 2

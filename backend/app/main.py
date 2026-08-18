@@ -10,6 +10,7 @@ from app.api.health import router as health_router
 from app.api.profile import router as profile_router
 from app.api.jobs import router as jobs_router
 from app.api.matches import router as matches_router
+from app.api.applications import router as applications_router
 
 # Set up logging configuration
 logging.basicConfig(
@@ -51,6 +52,8 @@ app.include_router(health_router, prefix="/api")
 app.include_router(profile_router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
 app.include_router(matches_router, prefix="/api")
+app.include_router(applications_router, prefix="/api")
+
 
 # Global error handler
 @app.exception_handler(Exception)

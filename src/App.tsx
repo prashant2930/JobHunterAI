@@ -43,6 +43,8 @@ import {
   matchJob,
   batchMatch,
   getMatches,
+  analyzeApplication,
+  ApplicationResponse,
   CandidateProfile, 
   Education, 
   Experience, 
@@ -51,6 +53,8 @@ import {
   MatchResult,
   RecommendationEnum
 } from "./services/api";
+import { ApplicationReviewModal } from "./components/ApplicationReviewModal";
+
 
 export default function App() {
   // Status states
@@ -59,8 +63,41 @@ export default function App() {
     databaseConnected: false,
   });
   
-  // Navigation
-  const [activeTab, setActiveTab] = useState<"profile" | "jobs">("profile");
+  // Navigation & UX Mode states
+  const [activeTab, setActiveTab] = useState<"profile" | "jobs">("jobs");
+  const [jobBoardMode, setJobBoardMode] = useState<"personalized" | "search_all">("personalized");
+  const [expFilter, setExpFilter] = useState<string>("any");
+
+  const handleFindMyJobs = async () => {
+    if (!profile) return;
+    if (isEditingProfile) {
+      await handleSaveProfile();
+    }
+    setActiveTab("jobs");
+    setJobBoardMode("personalized");
+    const targetQuery = profile.preferences?.preferred_roles?.[0] || profile.skills?.programming_languages?.[0] || "software engineer";
+    setSearchQuery(targetQuery);
+    try {
+      setIsSearchingJobs(true);
+      await searchJobs({
+        query: targetQuery,
+        location: profile.preferences?.preferred_locations?.[0] || null,
+        remote: profile.preferences?.remote_preference || null,
+        page: 1,
+        limit: 15
+      });
+      const dbJobs = await getJobs({ page: 1, limit: 30 });
+      setJobs(dbJobs);
+      if (dbJobs.length > 0) {
+        await handleBatchMatch(true);
+      }
+    } catch (err: any) {
+      console.error("Find my jobs error:", err);
+    } finally {
+      setIsSearchingJobs(false);
+    }
+  };
+
   
   // Candidate Profile logic states
   const [profile, setProfile] = useState<CandidateProfile | null>(null);
@@ -91,6 +128,33 @@ export default function App() {
   const [matchFilterScore, setMatchFilterScore] = useState<number>(0);
   const [matchFilterRec, setMatchFilterRec] = useState<string>("");
   const [jobsSortOrder, setJobsSortOrder] = useState<"score" | "newest">("score");
+
+  // Application Intelligence logic states (Phase 4)
+  const [analyzingAppJobId, setAnalyzingAppJobId] = useState<string | null>(null);
+  const [currentAppResponse, setCurrentAppResponse] = useState<ApplicationResponse | null>(null);
+  const [isAppModalOpen, setIsAppModalOpen] = useState(false);
+
+  const handleAnalyzeApplication = async (job: Job, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!profile) {
+      triggerToast("Please upload a Candidate Profile first.");
+      return;
+    }
+    setAnalyzingAppJobId(job.job_id);
+    try {
+      const appRes = await analyzeApplication(job.job_id, job.application_url);
+      setCurrentAppResponse(appRes);
+      setIsAppModalOpen(true);
+      triggerToast("Application form fields analyzed!");
+    } catch (err: any) {
+      triggerToast(err.message || "Application analysis failed.");
+    } finally {
+      setAnalyzingAppJobId(null);
+    }
+  };
+
+
+
 
   // File input ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -519,26 +583,39 @@ export default function App() {
           </div>
           
           {/* Navigation tabs */}
-          <nav className="hidden md:flex items-center bg-neutral-900 border border-neutral-850 rounded-xl p-1">
+          <nav className="hidden md:flex items-center bg-neutral-900 border border-neutral-850 rounded-xl p-1 gap-1">
             <button
-              onClick={() => { setActiveTab("profile"); setJobsError(null); }}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                activeTab === "profile" 
-                  ? "bg-neutral-800 text-white shadow-sm" 
+              onClick={() => { setActiveTab("jobs"); setJobBoardMode("personalized"); setProfileError(null); }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "jobs" && jobBoardMode === "personalized"
+                  ? "bg-indigo-600 text-white shadow-sm font-bold" 
                   : "text-neutral-400 hover:text-neutral-200"
               }`}
             >
-              Resume Profile
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              Jobs For You
             </button>
             <button
-              onClick={() => { setActiveTab("jobs"); setProfileError(null); }}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                activeTab === "jobs" 
-                  ? "bg-neutral-800 text-white shadow-sm" 
+              onClick={() => { setActiveTab("jobs"); setJobBoardMode("search_all"); setProfileError(null); }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "jobs" && jobBoardMode === "search_all"
+                  ? "bg-neutral-800 text-white shadow-sm font-bold" 
                   : "text-neutral-400 hover:text-neutral-200"
               }`}
             >
-              Job Board
+              <Search className="w-3.5 h-3.5" />
+              Search All Jobs
+            </button>
+            <button
+              onClick={() => { setActiveTab("profile"); setJobsError(null); }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "profile" 
+                  ? "bg-neutral-800 text-white shadow-sm font-bold" 
+                  : "text-neutral-400 hover:text-neutral-200"
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Resume Profile
             </button>
           </nav>
         </div>
@@ -563,25 +640,48 @@ export default function App() {
       {/* Main Container */}
       <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-8 flex flex-col justify-start">
         
+        {!status.backendConnected && (
+          <div className="mb-6 p-3 bg-amber-950/20 border border-amber-500/30 text-amber-300 rounded-xl flex items-center justify-between text-xs gap-3">
+            <div className="flex items-center gap-2">
+              <Info className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <span>
+                <strong>Static Frontend Preview:</strong> Local FastAPI server is currently offline. Start the backend locally at <code className="bg-neutral-900 px-1.5 py-0.5 rounded text-amber-200 font-mono text-[11px]">http://localhost:8000</code> or configure <code className="bg-neutral-900 px-1.5 py-0.5 rounded text-amber-200 font-mono text-[11px]">VITE_API_BASE_URL</code> to enable live AI resume parsing & real-time job search.
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Mobile Tab Switcher */}
-        <div className="md:hidden flex bg-neutral-900 border border-neutral-850 rounded-xl p-1 mb-6">
+
+        <div className="md:hidden flex bg-neutral-900 border border-neutral-850 rounded-xl p-1 mb-6 gap-1">
+          <button
+            onClick={() => { setActiveTab("jobs"); setJobBoardMode("personalized"); }}
+            className={`flex-1 text-center py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
+              activeTab === "jobs" && jobBoardMode === "personalized" ? "bg-indigo-600 text-white font-bold" : "text-neutral-400"
+            }`}
+          >
+            <Sparkles className="w-3 h-3 text-amber-400" />
+            Jobs For You
+          </button>
+          <button
+            onClick={() => { setActiveTab("jobs"); setJobBoardMode("search_all"); }}
+            className={`flex-1 text-center py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
+              activeTab === "jobs" && jobBoardMode === "search_all" ? "bg-neutral-800 text-white font-bold" : "text-neutral-400"
+            }`}
+          >
+            <Search className="w-3 h-3" />
+            Search All
+          </button>
           <button
             onClick={() => setActiveTab("profile")}
             className={`flex-1 text-center py-2 text-xs font-semibold rounded-lg transition-all ${
               activeTab === "profile" ? "bg-neutral-800 text-white" : "text-neutral-400"
             }`}
           >
-            Resume Profile
-          </button>
-          <button
-            onClick={() => setActiveTab("jobs")}
-            className={`flex-1 text-center py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === "jobs" ? "bg-neutral-800 text-white" : "text-neutral-400"
-            }`}
-          >
-            Job Board
+            Profile
           </button>
         </div>
+
 
         {/* TAB 1: RESUME PROFILE */}
         {activeTab === "profile" && (
@@ -672,8 +772,16 @@ export default function App() {
                       Verify or edit the candidate schema below. The checked profile will be saved locally to SQLite.
                     </p>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      onClick={handleFindMyJobs}
+                      className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-xl text-sm flex items-center gap-2 shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/30 transition-all cursor-pointer border border-indigo-400/30"
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-300 fill-amber-300" />
+                      Find My Jobs
+                    </button>
                     {isEditingProfile ? (
+
                       <>
                         <button
                           onClick={handleSaveProfile}
@@ -995,31 +1103,77 @@ export default function App() {
             {/* Search inputs */}
             <div className="bg-neutral-900/40 border border-neutral-900 rounded-2xl p-6 flex flex-col gap-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <h2 className="text-xl font-bold bg-gradient-to-r from-white to-neutral-400 bg-clip-text text-transparent flex items-center gap-2">
-                  <Search className="w-5 h-5 text-indigo-400" />
-                  Aggregated Job Board
-                </h2>
-                
-                {profile && (
-                  <button
-                    onClick={() => handleBatchMatch(true)}
-                    disabled={isBatchAnalyzing || jobs.length === 0}
-                    className="px-4 py-2 bg-neutral-900 hover:bg-neutral-850 disabled:bg-neutral-950 border border-neutral-850 hover:border-neutral-800 disabled:opacity-50 text-neutral-300 font-semibold rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer"
-                  >
-                    {isBatchAnalyzing ? (
+                <div>
+                  <h2 className="text-xl font-bold bg-gradient-to-r from-white to-neutral-400 bg-clip-text text-transparent flex items-center gap-2">
+                    {jobBoardMode === "personalized" ? (
                       <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Scoring Jobs...
+                        <Sparkles className="w-5 h-5 text-amber-400" />
+                        Jobs For You
                       </>
                     ) : (
                       <>
-                        <Gauge className="w-3.5 h-3.5 text-indigo-400" />
-                        Batch Match Stored Jobs
+                        <Search className="w-5 h-5 text-indigo-400" />
+                        Search All Jobs
                       </>
                     )}
-                  </button>
-                )}
+                  </h2>
+                  <p className="text-xs text-neutral-400 mt-1">
+                    {jobBoardMode === "personalized"
+                      ? profile 
+                        ? `Recommendations personalized for ${profile.personal_info.name} based on skills & preferences`
+                        : "Upload a resume to get AI-personalized job recommendations"
+                      : "Search and discover jobs across RemoteOK, Arbeitnow, Remotive, Jobicy, Greenhouse, and Adzuna"}
+                  </p>
+                </div>
+                
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex bg-neutral-950 border border-neutral-850 rounded-xl p-1 gap-1">
+                    <button
+                      onClick={() => setJobBoardMode("personalized")}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                        jobBoardMode === "personalized"
+                          ? "bg-indigo-600 text-white font-bold"
+                          : "text-neutral-400 hover:text-neutral-200"
+                      }`}
+                    >
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      Jobs For You
+                    </button>
+                    <button
+                      onClick={() => setJobBoardMode("search_all")}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                        jobBoardMode === "search_all"
+                          ? "bg-neutral-850 text-white font-bold"
+                          : "text-neutral-400 hover:text-neutral-200"
+                      }`}
+                    >
+                      <Search className="w-3 h-3" />
+                      Search All
+                    </button>
+                  </div>
+
+                  {profile && (
+                    <button
+                      onClick={() => handleBatchMatch(true)}
+                      disabled={isBatchAnalyzing || jobs.length === 0}
+                      className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-850 disabled:bg-neutral-950 border border-neutral-850 hover:border-neutral-800 disabled:opacity-50 text-neutral-300 font-semibold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      {isBatchAnalyzing ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          Scoring...
+                        </>
+                      ) : (
+                        <>
+                          <Gauge className="w-3.5 h-3.5 text-indigo-400" />
+                          Batch Match
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
               </div>
+
               
               <form onSubmit={handleJobSearch} className="flex flex-col md:flex-row md:items-end gap-4 border-t border-neutral-950/40 pt-4">
                 <div className="flex-1">
@@ -1144,7 +1298,8 @@ export default function App() {
                 <div className="bg-neutral-900/40 border border-neutral-900 p-4 rounded-xl">
                   <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-3">Sources Filter</h3>
                   <div className="flex flex-wrap md:flex-col gap-2">
-                    {["", "remoteok", "adzuna"].map((src) => (
+                    {["", "remoteok", "adzuna", "arbeitnow", "remotive", "jobicy", "greenhouse", "lever"].map((src) => (
+
                       <button
                         key={src}
                         onClick={async () => {
@@ -1160,16 +1315,17 @@ export default function App() {
                           setJobsPage(1);
                           setHasMoreJobs(filtered.length === 30);
                         }}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg text-left transition-all cursor-pointer ${
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg text-left transition-all cursor-pointer capitalize ${
                           jobFilterSource === src
                             ? "bg-indigo-600 text-white"
                             : "bg-neutral-950 hover:bg-neutral-850 text-neutral-400 hover:text-neutral-200"
                         }`}
                       >
-                        {src === "" ? "All Sources" : src === "remoteok" ? "RemoteOK" : "Adzuna"}
+                        {src === "" ? "All Sources" : src}
                       </button>
                     ))}
                   </div>
+
                 </div>
 
                 {/* Score & Recommendation Filters */}
@@ -1177,6 +1333,45 @@ export default function App() {
                   <div className="flex items-center gap-2 border-b border-neutral-950 pb-2">
                     <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
                     <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-wider">Suitability Filter</h3>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-500 uppercase block mb-1">Experience Level</label>
+                    <select
+                      value={expFilter}
+                      onChange={async (e) => {
+                        const val = e.target.value;
+                        setExpFilter(val);
+                        let minExp: number | undefined;
+                        let maxExp: number | undefined;
+                        if (val === "0-1") { minExp = 0; maxExp = 1; }
+                        else if (val === "1-2") { minExp = 1; maxExp = 2; }
+                        else if (val === "2-3") { minExp = 2; maxExp = 3; }
+                        else if (val === "3-5") { minExp = 3; maxExp = 5; }
+                        else if (val === "5+") { minExp = 5; maxExp = undefined; }
+                        
+                        const filtered = await getJobs({
+                          page: 1,
+                          limit: 30,
+                          source: jobFilterSource || undefined,
+                          remote: searchRemote === "any" ? undefined : searchRemote,
+                          title: searchQuery || undefined,
+                          min_exp: minExp,
+                          max_exp: maxExp
+                        });
+                        setJobs(filtered);
+                        setJobsPage(1);
+                        setHasMoreJobs(filtered.length === 30);
+                      }}
+                      className="w-full bg-neutral-950 border border-neutral-850 rounded-lg px-2 py-1.5 text-xs text-neutral-200"
+                    >
+                      <option value="any">Any Experience</option>
+                      <option value="0-1">Fresher / 0–1 yrs</option>
+                      <option value="1-2">1–2 yrs</option>
+                      <option value="2-3">2–3 yrs</option>
+                      <option value="3-5">3–5 yrs</option>
+                      <option value="5+">5+ yrs</option>
+                    </select>
                   </div>
 
                   <div>
@@ -1191,22 +1386,9 @@ export default function App() {
                     </select>
                   </div>
 
-                  <div>
-                    <label className="text-[10px] font-bold text-neutral-500 uppercase block mb-1">Min Match Score</label>
-                    <select
-                      value={matchFilterScore}
-                      onChange={(e) => setMatchFilterScore(Number(e.target.value))}
-                      className="w-full bg-neutral-950 border border-neutral-850 rounded-lg px-2 py-1.5 text-xs text-neutral-200"
-                    >
-                      <option value={0}>Show All Scores</option>
-                      <option value={80}>80%+ (Strong Match)</option>
-                      <option value={60}>60%+ (Match)</option>
-                      <option value={45}>45%+ (Possible)</option>
-                    </select>
-                  </div>
 
                   <div>
-                    <label className="text-[10px] font-bold text-neutral-500 uppercase block mb-1">Recommendation</label>
+                    <label className="text-[10px] font-bold text-neutral-500 uppercase block mb-1">Recommendation Class</label>
                     <select
                       value={matchFilterRec}
                       onChange={(e) => setMatchFilterRec(e.target.value)}
@@ -1220,20 +1402,79 @@ export default function App() {
                       <option value="REJECT">Reject</option>
                     </select>
                   </div>
+
                 </div>
               </div>
 
               {/* Jobs feed card columns */}
               <div className="flex-1 flex flex-col gap-4">
+                {jobBoardMode === "personalized" && !profile && (
+                  <div className="p-8 bg-gradient-to-br from-neutral-900 via-neutral-900/90 to-indigo-950/40 border border-indigo-500/30 rounded-2xl text-center flex flex-col items-center justify-center gap-4 mb-2">
+                    <Sparkles className="w-10 h-10 text-amber-400 animate-pulse" />
+                    <div>
+                      <h3 className="text-xl font-bold text-white mb-1">Get Personalized Job Recommendations</h3>
+                      <p className="text-sm text-neutral-400 max-w-md mx-auto">
+                        Search jobs without a resume, or upload your resume to get AI-personalized recommendations matching your skills & experience level.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap justify-center mt-2">
+                      <button
+                        onClick={() => { setActiveTab("profile"); setProfileError(null); }}
+                        className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                      >
+                        <UploadCloud className="w-4 h-4" />
+                        Upload Resume Now
+                      </button>
+                      <button
+                        onClick={() => setJobBoardMode("search_all")}
+                        className="px-5 py-2.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-300 text-xs font-bold rounded-xl transition-all border border-neutral-700 cursor-pointer"
+                      >
+                        Search All Jobs Without Resume
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Clean Job Discovery Summary Line */}
+                <div className="flex flex-wrap items-center justify-between bg-neutral-900/40 border border-neutral-850 px-4 py-2.5 rounded-xl text-xs text-neutral-400 gap-2">
+                  <div className="flex items-center gap-2 font-medium text-neutral-300">
+                    <span className="text-white font-bold">{filteredJobs.length} jobs found</span>
+                    <span>·</span>
+                    <span className="text-neutral-400">{jobSearchStats?.duplicates_removed || 0} duplicates removed</span>
+                  </div>
+                  {jobSearchStats && jobSearchStats.duplicates_removed > 0 && (
+                    <span className="text-[11px] font-semibold text-neutral-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Unique job listings prioritized
+                    </span>
+                  )}
+                </div>
+
+
                 {filteredJobs.length === 0 ? (
-                  <div className="bg-neutral-900/20 border border-neutral-900 p-12 text-center rounded-2xl flex flex-col items-center justify-center text-neutral-500">
-                    <Search className="w-8 h-8 mb-2 text-neutral-600" />
-                    <p className="text-sm font-semibold">No active job listings match your filters.</p>
-                    <p className="text-xs text-neutral-600 mt-1">Adjust filters or search keywords above.</p>
+
+                  <div className="bg-neutral-900/20 border border-neutral-900 p-12 text-center rounded-2xl flex flex-col items-center justify-center text-neutral-500 gap-3">
+                    <Search className="w-8 h-8 text-neutral-600" />
+                    <div>
+                      <p className="text-sm font-semibold text-neutral-300">No active job listings match your current filters.</p>
+                      <p className="text-xs text-neutral-500 mt-1">Try searching for keywords like "software engineer", "developer", or clear active filters.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setJobFilterSource("");
+                        setMatchFilterScore(0);
+                        setMatchFilterRec("");
+                        setSearchQuery("");
+                        setExpFilter("any");
+                      }}
+                      className="px-4 py-2 bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 text-neutral-300 text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                    >
+                      Reset All Filters
+                    </button>
                   </div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-1 gap-4">
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+
                       {filteredJobs.map((job) => {
                         const match = matches[job.job_id];
                         return (
@@ -1301,6 +1542,22 @@ export default function App() {
                             <p className="text-xs text-neutral-500 line-clamp-2 leading-relaxed">
                               {job.description.replace(/<[^>]*>/g, " ")}
                             </p>
+
+                            {/* Match explanation card highlight */}
+                            {match && (
+                              <div className="p-2.5 bg-neutral-950/70 border border-neutral-850/80 rounded-xl text-xs flex flex-col gap-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] uppercase font-bold text-neutral-400 flex items-center gap-1">
+                                    <Sparkles className="w-3 h-3 text-amber-400" /> Why This Matches:
+                                  </span>
+                                  <span className="text-[10px] text-neutral-500 font-semibold">{match.overall_score}% Match Score</span>
+                                </div>
+                                <p className="text-[11px] text-neutral-300 line-clamp-2 leading-relaxed">
+                                  {match.explanation}
+                                </p>
+                              </div>
+                            )}
+
                             
                             <div className="flex items-center justify-between border-t border-neutral-950/60 pt-3 text-[10px] text-neutral-500 font-semibold">
                               <span className="flex items-center gap-1">
@@ -1308,10 +1565,38 @@ export default function App() {
                                 Posted: {formatJobDate(job.posted_date)}
                               </span>
                               
-                              <span className="flex items-center gap-0.5 text-indigo-400 hover:text-indigo-300">
-                                View details
-                                <ChevronRight className="w-3 h-3" />
-                              </span>
+                              <div className="flex items-center gap-2">
+                                {profile && (
+                                  <button
+                                    onClick={(e) => handleAnalyzeApplication(job, e)}
+                                    disabled={analyzingAppJobId === job.job_id}
+                                    className="px-2.5 py-1 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-300 rounded-md text-[10px] font-bold tracking-wide cursor-pointer flex items-center gap-1 transition-all"
+                                    title="Analyze Application Form Fields"
+                                  >
+                                    {analyzingAppJobId === job.job_id ? (
+                                      <RefreshCw className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <FileText className="w-3 h-3" />
+                                    )}
+                                    Analyze Application
+                                  </button>
+                                )}
+                                <a
+                                  href={job.application_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 rounded-md text-[10px] font-bold tracking-wide flex items-center gap-1 transition-all"
+                                  title="Open original job posting in new tab"
+                                >
+                                  View Job <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                                <span className="flex items-center gap-0.5 text-neutral-400 hover:text-neutral-200">
+                                  Details
+                                  <ChevronRight className="w-3 h-3" />
+                                </span>
+                              </div>
+
                             </div>
                           </div>
                         );
@@ -1561,26 +1846,57 @@ export default function App() {
             </div>
 
             {/* Drawer Actions */}
-            <div className="p-6 border-t border-neutral-900 bg-neutral-950 sticky bottom-0 z-10 flex items-center justify-end gap-3">
-              <a
-                href={selectedJob.application_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 font-semibold rounded-xl text-sm flex items-center gap-2 cursor-pointer transition-all border border-indigo-500/30 text-white"
-              >
-                Apply for Position
-                <ExternalLink className="w-4 h-4" />
-              </a>
-              <button
-                onClick={() => setIsDetailDrawerOpen(false)}
-                className="px-6 py-3 bg-neutral-900 hover:bg-neutral-850 border border-neutral-850 rounded-xl text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
-              >
-                Close Drawer
-              </button>
+            <div className="p-6 border-t border-neutral-900 bg-neutral-950 sticky bottom-0 z-10 flex items-center justify-between gap-3">
+              {profile && (
+                <button
+                  onClick={(e) => handleAnalyzeApplication(selectedJob, e as any)}
+                  disabled={analyzingAppJobId === selectedJob.job_id}
+                  className="px-4 py-2.5 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 font-bold rounded-xl text-xs flex items-center gap-2 cursor-pointer transition-all"
+                >
+                  {analyzingAppJobId === selectedJob.job_id ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <FileText className="w-4 h-4" />
+                  )}
+                  Analyze Application
+                </button>
+              )}
+
+              <div className="flex items-center gap-3">
+                <a
+                  href={selectedJob.application_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 font-semibold rounded-xl text-sm flex items-center gap-2 cursor-pointer transition-all border border-indigo-500/30 text-white"
+                >
+                  Apply for Position
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+                <button
+                  onClick={() => setIsDetailDrawerOpen(false)}
+                  className="px-6 py-3 bg-neutral-900 hover:bg-neutral-850 border border-neutral-850 rounded-xl text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                >
+                  Close Drawer
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* APPLICATION INTELLIGENCE REVIEW MODAL */}
+      <ApplicationReviewModal
+        isOpen={isAppModalOpen}
+        onClose={() => setIsAppModalOpen(false)}
+        application={currentAppResponse}
+        jobTitle={selectedJob?.title || "Job Application"}
+        companyName={selectedJob?.company || ""}
+        onApproveSuccess={(updatedApp) => {
+          setCurrentAppResponse(updatedApp);
+          triggerToast("Application package APPROVED!");
+        }}
+      />
+
 
       {/* Footer */}
       <footer className="border-t border-neutral-900 bg-neutral-950/40 px-6 py-4 flex items-center justify-between text-xs text-neutral-500 mt-12">
